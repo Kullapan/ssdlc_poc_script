@@ -1,7 +1,7 @@
 # Node.js 18 - Vulnerability Findings Report
 
 > **SSDLC Gate 3:** Direct Visible CVE Scanning (HIGH & CRITICAL)
-> Target: `nodejs-18-npm`
+> Target: `/c/KK/Workspace/AntigravityProject/SSDLC_POC/nodejs-18-npm`
 
 ## Detected Vulnerabilities
 
