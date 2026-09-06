@@ -1,7 +1,7 @@
 # Java 21 (Maven) - Vulnerability Findings Report
 
 > **SSDLC Gate 3:** Direct Visible CVE Scanning (HIGH & CRITICAL)
-> Target: `java-21-maven`
+> Target: `/c/KK/Workspace/AntigravityProject/SSDLC_POC/java-21-maven`
 
 ## Detected Vulnerabilities
 

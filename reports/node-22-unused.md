@@ -3,17 +3,13 @@
 > **SSDLC Gate 1:** Attack Surface Reduction (Audit Only)
 
 ## Summary
-- **Unused Dependencies Count:** 3
-- **Unused DevDependencies Count:** 0
+- **Unused Production Dependencies:** 3
+- **Unused Development Dependencies:** 0
 
-## Unused Dependencies
+## Unused Declared Dependencies
 
-| Type | Package Name | Status |
-| :--- | :--- | :--- |
-| Dependency | `ms` | Declared in package.json but not imported |
-| Dependency | `lodash` | Declared in package.json but not imported |
-| Dependency | `request` | Declared in package.json but not imported |
-
-## Unused DevDependencies
-
-*No unused development dependencies detected.*
+| Scope | Package Name | Declared Version | Installed Version | Recommended Action |
+| :--- | :--- | :--- | :--- | :--- |
+| `dependencies` | `ms` | `^2.1.3` | `2.1.3` | Remove unused dependency |
+| `dependencies` | `lodash` | `3.10.1` | `3.10.1` | Remove unused dependency |
+| `dependencies` | `request` | `2.88.2` | `2.88.2` | Remove unused dependency |

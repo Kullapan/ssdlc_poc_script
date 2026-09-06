@@ -1,7 +1,7 @@
 # Kotlin 2.0 (JVM 11) - Vulnerability Findings Report
 
 > **SSDLC Gate 3:** Direct Visible CVE Scanning (HIGH & CRITICAL)
-> Target: `kotlin-11-gradle`
+> Target: `/c/KK/Workspace/AntigravityProject/SSDLC_POC/kotlin-11-gradle`
 
 ## Detected Vulnerabilities
 
