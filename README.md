@@ -37,7 +37,10 @@ ssdlc-poc/
 ├── nodejs-20-npm/               # Node.js 20 LTS baseline, npm
 ├── nodejs-22-npm/               # Node.js 22 LTS baseline, npm
 ├── scripts/
-│   ├── common.sh                # Shared cross-platform utilities (OS detection, tool resolution)
+│   ├── common.sh                # Shared cross-platform utilities (OS detection, dynamic resolution, lockfile/wrapper lifecycle)
+│   ├── markdown.tpl             # Go template for Trivy to generate clean Markdown tables with clickable links
+│   ├── init-versions.gradle     # Dynamic Gradle init-script for zero-impact outdated dependency scanning
+│   ├── gradle-wrapper.jar       # Compatibility wrapper jar for external repos missing wrapper binary
 │   ├── check-java-11.sh         # All 3 gates for java-11-maven
 │   ├── check-java-17.sh         # All 3 gates for java-17-maven
 │   ├── check-java-21.sh         # All 3 gates for java-21-maven
@@ -66,6 +69,8 @@ ssdlc-poc/
 | **Gate 1** | Unused Dependencies (Attack Surface Reduction) | Maven Dependency Plugin, AutonomousApps Dependency Analysis, Depcheck | `reports/<project>-unused.md` |
 | **Gate 2** | Lifecycle, EOL, Deprecated & Outdated Checks | Versions Maven Plugin, Ben-Manes Versions Plugin, npm outdated & view | `reports/<project>-outdated.md` or `reports/<project>-health.md` |
 | **Gate 3** | Direct Visible CVE Scanning | Aqua Security Trivy CLI (Filesystem mode) | `reports/<project>-cve.md` |
+
+> **Actionable Developer Guidance:** Every report includes an explicit **Recommended Action** column specifying whether to remove unused dependencies, upgrade to a newer version (with breaking change warnings for major versions), or migrate away from deprecated libraries.
 
 ---
 
@@ -137,15 +142,14 @@ trivy fs --severity HIGH,CRITICAL --exit-code 0 --format table java-11-maven
 
 > **Note:** Maven is **not** required. The `gradlew` wrapper is bundled in each project and auto-downloads Gradle 8.5 on first run (requires internet on first use only).
 
-#### Gradle Plugins — Auto-downloaded by Gradle wrapper on first run
+#### Gradle Plugins & Zero-Impact External Project Architecture
 
-| Plugin | Version | Gate |
-| :--- | :--- | :--- |
-| `org.jetbrains.kotlin.jvm` | `2.0.21` | Compilation |
-| `com.autonomousapps.dependency-analysis` | `1.31.0` | Gate 1 |
-| `com.github.ben-manes.versions` | `0.51.0` | Gate 2 |
-
-> Gradle 8.5 is cached at `~/.gradle/wrapper/dists/gradle-8.5-bin/` after first run.
+| Plugin / Tool | Version / Script | Gate | Role & Behavior |
+| :--- | :--- | :--- | :--- |
+| `org.jetbrains.kotlin.jvm` | `2.0.21` | Compilation | Language compiler |
+| `com.autonomousapps.dependency-analysis` | `1.31.0` | Gate 1 | Unused declared dependency analysis (`buildHealth`). Automatically injected on the fly if missing, and original build file is restored immediately (`project untouched`). |
+| `com.github.ben-manes.versions` | `scripts/init-versions.gradle` | Gate 2 | Injected dynamically on the fly via `--init-script`. External projects **never** need to modify their `build.gradle.kts`. |
+| `Aqua Security Trivy` | `trivy` | Gate 3 | Direct CVE scanning. If `gradle.lockfile` is missing, the script auto-generates a temporary lockfile and deletes it post-scan (`project untouched`). |
 
 #### Manual Commands — Run from inside the project directory
 
@@ -159,9 +163,9 @@ cd kotlin-11-gradle     # or kotlin-17-gradle / kotlin-21-gradle
 # Report written to: build/reports/dependency-analysis/build-health-report.txt
 ```
 
-**Gate 2 — Outdated / newer versions available**
+**Gate 2 — Outdated / newer versions available (via dynamic init-script)**
 ```bash
-./gradlew dependencyUpdates --no-daemon
+./gradlew --init-script ../scripts/init-versions.gradle dependencyUpdates --no-daemon
 # Report written to: build/dependencyUpdates/report.txt
 ```
 
@@ -170,7 +174,7 @@ cd kotlin-11-gradle     # or kotlin-17-gradle / kotlin-21-gradle
 trivy fs --severity HIGH,CRITICAL --exit-code 0 --format table kotlin-11-gradle
 ```
 
-> **Trivy requirement:** Each Kotlin project includes a pre-generated `gradle.lockfile` in its root. Without this file, Trivy reports zero language-specific files and skips CVE scanning.
+> **Zero-Impact Trivy Lockfile:** Trivy requires a `gradle.lockfile` for Gradle Kotlin DSL (`.kts`) projects. When running check scripts against external projects lacking a lockfile, the script automatically parses declared dependencies into a temporary `gradle.lockfile` and removes it immediately upon scan completion.
 
 #### Test Fixture Dependencies (`build.gradle.kts`)
 
@@ -322,9 +326,11 @@ bash run-checks.sh
 ```
 
 ### Run Individual Project Audit
-Each project check script is self-contained and accepts an optional output directory argument:
+Each project check script is self-contained and accepts optional arguments:
+`bash scripts/check-<type>.sh [TARGET_DIR] [REPORTS_DIR]`
+
 ```bash
-# Audit a single Java service:
+# Audit a single Java service in the monorepo:
 bash scripts/check-java-17.sh
 
 # Audit a single Kotlin service:
@@ -332,14 +338,57 @@ bash scripts/check-kotlin-11.sh
 
 # Audit a single Node.js service:
 bash scripts/check-node-22.sh
+```
 
-# Custom output directory:
-bash scripts/check-java-11.sh my-reports/
+### Run on Any External Project
+
+You can run these check scripts against **any external repository or project** on your workstation without modifying their build files:
+
+#### Java Projects (Maven)
+```bash
+# Point to external project path:
+bash scripts/check-java-11.sh /path/to/external-java-service
+
+# Or cd into the project and run:
+cd /path/to/external-java-service
+bash /path/to/SSDLC_POC/scripts/check-java-11.sh
+# -> Automatically detects pom.xml in current directory!
+# -> Reports written to: /path/to/external-java-service/reports/
+```
+
+> **Zero POM Changes Needed:** The scripts invoke fully-qualified Maven plugin coordinates (`maven-dependency-plugin:3.6.1` and `versions-maven-plugin:2.16.2`) on the fly. External projects do **not** need these plugins declared in their `pom.xml`.
+
+#### Kotlin / Android Projects (Gradle)
+```bash
+# Point to external Kotlin project:
+bash scripts/check-kotlin-17.sh /path/to/external-kotlin-service
+
+# Or cd into the external project and run:
+cd /path/to/external-kotlin-service
+bash /path/to/SSDLC_POC/scripts/check-kotlin-17.sh
+```
+> **Zero Build File Changes Needed:**
+> - **Gate 1 (Unused):** Auto-injects `dependency-analysis` into `build.gradle.kts` temporarily if missing, runs `buildHealth`, and immediately restores the original file (`project untouched`).
+> - **Gate 2 (Outdated):** Injects `ben-manes.versions` on the fly using `--init-script scripts/init-versions.gradle` without modifying `build.gradle.kts`.
+> - **Gate 3 (CVEs):** Auto-generates a temporary `gradle.lockfile` from declared dependencies so Trivy can scan, then immediately deletes it upon completion (`project untouched`).
+> - **Wrapper Compatibility:** Automatically supplies a temporary `gradle-wrapper.jar` if omitted in the external repository and cleans it up post-run.
+
+#### Node.js / Frontend Projects (npm)
+```bash
+# Point to external Node.js project:
+bash scripts/check-node-18.sh /path/to/external-node-service
+```
+> Automatically runs `npm install` if `node_modules/` is not present, then runs `depcheck`, `npm outdated`, and Trivy CVE scanning.
+
+#### Custom Output Directory (Any language)
+```bash
+# Syntax: bash scripts/check-<type>.sh [TARGET_DIR] [REPORTS_DIR]
+bash scripts/check-java-17.sh /path/to/my-service ./custom-audit-reports
 ```
 
 ---
 
-## 8. Generated Reports
+## 8. Generated Reports & Actionable Schemas
 
 After running the checks, all reports are populated under `./reports/`:
 
@@ -358,17 +407,67 @@ After running the checks, all reports are populated under `./reports/`:
 
 ---
 
+### Report Schemas & Actionable Guidance
+
+Each report delivers structured, actionable tables designed to instruct developers directly:
+
+#### Gate 1: Unused Dependencies Report (`*-unused.md`)
+Identifies declared dependencies that have no references in source code to minimize the attack surface.
+
+| Ecosystem | Columns | Actionable Guidance |
+| :--- | :--- | :--- |
+| **Node.js** | `\| Scope \| Package Name \| Declared Version \| Installed Version \| Recommended Action \|` | `Remove unused dependency` |
+| **Java** | `\| Dependency Coordinate \| Scope \| Recommended Action \|` | `Remove unused dependency` |
+| **Kotlin** | `\| Dependency Coordinate \| Scope \| Recommended Action \|` | `Remove unused dependency` |
+
+#### Gate 2: Library Health & Outdated Report (`*-health.md` / `*-outdated.md`)
+Inspects lifecycle, deprecations, and available updates:
+
+- **Node.js Schema (`*-health.md`):**
+  ```text
+  | Package | Scope | Declared | Installed | Wanted | Latest | Update Status | Deprecation Status | Recommended Action |
+  ```
+- **Java & Kotlin Schema (`*-outdated.md`):**
+  ```text
+  | Dependency Coordinate | Current Version | Available Update | Status | Recommended Action |
+  ```
+
+**Recommended Action Decision Logic:**
+- **Deprecated / EOL Package:** `⚠️ Migrate to an active alternative (deprecated)`
+- **Major Update Available:** `Upgrade package.json to ^<latest> (test for breaking changes)`
+- **Minor / Patch Update Available:** `Upgrade package.json to ^<latest>` or `Upgrade to <latest>`
+- **Baseline Alignment:** `Optional: bump package.json to ^<installed> to reflect installed baseline` *(when declared range has older lower bound than what was resolved and installed)*
+- **Up to Date:** `No action needed (up to date)`
+
+#### Gate 3: Direct Visible CVE Scan (`*-cve.md`)
+Extracts and filters HIGH and CRITICAL CVE findings:
+
+```text
+| Severity | CVE ID | Package | Installed Version | Fixed Version | Title |
+```
+- Includes direct clickable links to Aqua Vulnerability Database (AVD) / NVD.
+- Highlights fixed versions for fast remediation.
+
+
+---
+
 ## 9. Cross-Platform Architecture
 
 All 9 check scripts source `scripts/common.sh` at startup. This shared utility handles:
 
 | Function | Windows resolution | macOS resolution |
 | :--- | :--- | :--- |
+| `resolve_target_dir` | Dynamically resolves target project path and reports folder (supports external repos) | Same |
 | `resolve_trivy` | `trivy` in PATH → `trivy.exe` → WinGet packages glob | `trivy` in PATH → `/usr/local/bin/trivy` → `/opt/homebrew/bin/trivy` |
 | `resolve_mvn` | `mvn` → `mvn.cmd` fallback | `mvn` |
 | `resolve_node` | `node` → `node.exe` fallback | `node` |
 | `resolve_npm` | `npm` → `npm.cmd` fallback | `npm` |
 | `resolve_npx` | `npx` → `npx.cmd` fallback | `npx` |
+| `ensure_gradle_lockfile` | Auto-generates temporary `gradle.lockfile` for Trivy if missing | Same |
+| `cleanup_gradle_lockfile` | Removes temporary lockfile, preserving user files | Same |
+| `ensure_gradle_wrapper` | Supplies temporary `gradle-wrapper.jar` if omitted in target | Same |
+| `cleanup_gradle_wrapper` | Removes temporary wrapper jar post-run | Same |
+| `cleanup_all_gradle_temp`| Traps and removes all temporary Gradle artifacts | Same |
 | `trivy_install_hint` | Shows `winget install` instruction | Shows `brew install` instruction |
 
 OS detection uses `uname -s`: `Darwin` = macOS, `MINGW*`/`MSYS*`/`CYGWIN*` = Windows Git Bash.

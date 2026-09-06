@@ -1,19 +1,13 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-PROJECT_NAME="Java 17 (Maven)"
-PROJECT_ID="java-17"
-PROJECT_DIR="java-17-maven"
-REPORTS_DIR="${1:-reports}"
-
 # Source shared cross-platform utilities
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
+resolve_target_dir "Java 17 (Maven)" "java-17" "java-17-maven" "${1:-}" "${2:-}"
 resolve_mvn
 resolve_trivy
-
-mkdir -p "${REPORTS_DIR}"
 
 echo "============================================================"
 echo " Starting SSDLC Audit for [${PROJECT_NAME}] (${PROJECT_DIR})"
@@ -24,8 +18,9 @@ echo "============================================================"
 # ------------------------------------------------------------
 echo "[Gate 1] Analyzing dependency usage (analyze-only)..."
 GATE1_REPORT="${REPORTS_DIR}/${PROJECT_ID}-unused.md"
+echo "  [CMD] $MVN_CMD compile org.apache.maven.plugins:maven-dependency-plugin:3.6.1:analyze-only -f ${PROJECT_DIR}/pom.xml -DfailOnWarning=false"
 
-RAW_UNUSED=$("$MVN_CMD" compile dependency:analyze-only -f "${PROJECT_DIR}/pom.xml" -DfailOnWarning=false 2>/dev/null || true)
+RAW_UNUSED=$("$MVN_CMD" compile org.apache.maven.plugins:maven-dependency-plugin:3.6.1:analyze-only -f "${PROJECT_DIR}/pom.xml" -DfailOnWarning=false 2>/dev/null || true)
 
 cat <<'EOF' > "${GATE1_REPORT}"
 # Java 17 (Maven) - Unused Dependencies Report
@@ -34,8 +29,8 @@ cat <<'EOF' > "${GATE1_REPORT}"
 
 ## Unused Declared Dependencies
 
-| Group ID | Artifact ID | Type | Version | Scope |
-| :--- | :--- | :--- | :--- | :--- |
+| Group ID | Artifact ID | Type | Version | Scope | Recommended Action |
+| :--- | :--- | :--- | :--- | :--- | :--- |
 EOF
 
 echo "$RAW_UNUSED" | awk '
@@ -46,7 +41,7 @@ capturing && /:jar:/ {
     sub(/^.*\[(WARNING|INFO)\][ \t]*/, "", line)
     n = split(line, a, ":")
     if (n >= 5) {
-        printf("| `%s` | `%s` | %s | `%s` | %s |\n", a[1], a[2], a[3], a[4], a[5])
+        printf("| `%s` | `%s` | %s | `%s` | %s | Remove unused dependency |\n", a[1], a[2], a[3], a[4], a[5])
         count++
     }
 }
@@ -60,8 +55,9 @@ echo "  -> Gate 1 report written to ${GATE1_REPORT}"
 # ------------------------------------------------------------
 echo "[Gate 2] Checking outdated dependencies (versions:display-dependency-updates)..."
 GATE2_REPORT="${REPORTS_DIR}/${PROJECT_ID}-outdated.md"
+echo "  [CMD] $MVN_CMD org.codehaus.mojo:versions-maven-plugin:2.16.2:display-dependency-updates -DprocessDependencyManagement=false -f ${PROJECT_DIR}/pom.xml"
 
-RAW_OUTDATED=$("$MVN_CMD" versions:display-dependency-updates -DprocessDependencyManagement=false -f "${PROJECT_DIR}/pom.xml" 2>/dev/null || true)
+RAW_OUTDATED=$("$MVN_CMD" org.codehaus.mojo:versions-maven-plugin:2.16.2:display-dependency-updates -DprocessDependencyManagement=false -f "${PROJECT_DIR}/pom.xml" 2>/dev/null || true)
 
 cat <<'EOF' > "${GATE2_REPORT}"
 # Java 17 (Maven) - Outdated Dependencies Report
@@ -70,8 +66,8 @@ cat <<'EOF' > "${GATE2_REPORT}"
 
 ## Dependency Updates Available
 
-| Dependency | Current Version | Available Update | Status |
-| :--- | :--- | :--- | :--- |
+| Dependency | Current Version | Available Update | Status | Recommended Action |
+| :--- | :--- | :--- | :--- | :--- |
 EOF
 
 echo "$RAW_OUTDATED" | awk '
@@ -91,7 +87,7 @@ capturing && /->/ {
     sub(/[ \t]+$/, "", orig)
     n = split(orig, w, /[ \t]+/)
     curr = w[n]
-    printf("| `%s` | `%s` | `%s` | Update Available |\n", ga, curr, latest)
+    printf("| `%s` | `%s` | `%s` | Update Available | Upgrade to `%s` |\n", ga, curr, latest, latest)
 }
 capturing && (/BUILD SUCCESS/ || /---/ || /No dependencies have newer versions/) { capturing = 0 }
 ' >> "${GATE2_REPORT}"
@@ -105,6 +101,7 @@ echo "[Gate 3] Checking vulnerabilities for ${PROJECT_NAME}..."
 GATE3_REPORT="${REPORTS_DIR}/${PROJECT_ID}-cve.md"
 
 if command -v "$TRIVY_CMD" >/dev/null 2>&1 || [ -f "$TRIVY_CMD" ]; then
+    echo "  [CMD] $TRIVY_CMD fs --severity HIGH,CRITICAL --exit-code 0 --format table ${PROJECT_DIR}"
     echo "  -> Running Aqua Security Trivy scan ($TRIVY_CMD)..."
     "$TRIVY_CMD" fs --severity HIGH,CRITICAL --exit-code 0 --format table "${PROJECT_DIR}" || true
     
