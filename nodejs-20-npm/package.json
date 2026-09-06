@@ -1,0 +1,22 @@
+{
+  "name": "nodejs-20-service",
+  "version": "1.0.0",
+  "description": "SSDLC POC - Node.js 20 Service",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "audit:unused": "depcheck"
+  },
+  "engines": {
+    "node": ">=20.0.0 <21.0.0"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "ms": "^2.1.3",
+    "lodash": "3.10.1",
+    "request": "2.88.2"
+  },
+  "devDependencies": {
+    "depcheck": "^1.4.7"
+  }
+}
