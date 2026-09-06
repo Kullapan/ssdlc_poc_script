@@ -35,8 +35,13 @@ resolve_target_dir() {
     local arg1="${4:-}"
     local arg2="${5:-}"
 
-    # 1. Explicit directory passed in arg1
-    if [ -n "$arg1" ] && [ -d "$arg1" ] && [ "$arg1" != "reports" ]; then
+    _has_project_file() {
+        local d="$1"
+        [ -f "${d}/pom.xml" ] || [ -f "${d}/build.gradle.kts" ] || [ -f "${d}/build.gradle" ] || [ -f "${d}/package.json" ]
+    }
+
+    # 1. Explicit directory passed in arg1 that contains project files
+    if [ -n "$arg1" ] && [ -d "$arg1" ] && _has_project_file "$arg1"; then
         PROJECT_DIR="$(cd "$arg1" && pwd)"
         PROJECT_ID="$(basename "$PROJECT_DIR")"
         PROJECT_NAME="$PROJECT_ID"
@@ -46,8 +51,8 @@ resolve_target_dir() {
         else
             REPORTS_DIR="${PROJECT_DIR}/${rep}"
         fi
-    # 2. Called from inside a project directory (has pom.xml/build.gradle*/package.json)
-    elif [ -f "${_CALLER_DIR}/pom.xml" ] || [ -f "${_CALLER_DIR}/build.gradle.kts" ] || [ -f "${_CALLER_DIR}/build.gradle" ] || [ -f "${_CALLER_DIR}/package.json" ]; then
+    # 2. Called from inside a project directory (caller dir has project files)
+    elif _has_project_file "${_CALLER_DIR}"; then
         PROJECT_DIR="${_CALLER_DIR}"
         PROJECT_ID="$(basename "$PROJECT_DIR")"
         PROJECT_NAME="$PROJECT_ID"
@@ -59,7 +64,7 @@ resolve_target_dir() {
         fi
     # 3. Parent directory of scripts/ is itself a standalone project (e.g. sample-java-mvn/pom.xml exists)
     #    and the monorepo subfolder ($def_dir) does not exist here
-    elif ([ -f "${REPO_ROOT}/pom.xml" ] || [ -f "${REPO_ROOT}/build.gradle.kts" ] || [ -f "${REPO_ROOT}/build.gradle" ] || [ -f "${REPO_ROOT}/package.json" ]) && [ ! -d "${REPO_ROOT}/${def_dir}" ]; then
+    elif _has_project_file "${REPO_ROOT}" && [ ! -d "${REPO_ROOT}/${def_dir}" ]; then
         PROJECT_DIR="${REPO_ROOT}"
         PROJECT_ID="$(basename "$PROJECT_DIR")"
         PROJECT_NAME="$PROJECT_ID"
@@ -243,11 +248,11 @@ EOF_LOCK
         [ -z "$dep" ] && continue
 
         local colons
-        colons=$(echo "$dep" | tr -cd ':' | wc -c)
+        colons=$(echo "$dep" | tr -cd ':' | wc -c | tr -d '[:space:]')
 
-        if [ "$colons" -ge 2 ]; then
+        if [ "${colons:-0}" -ge 2 ]; then
             echo "${dep}=compileClasspath,runtimeClasspath" >> "$lockfile"
-        elif [ "$colons" -eq 1 ]; then
+        elif [ "${colons:-0}" -eq 1 ]; then
             if echo "$dep" | grep -q 'springframework' && [ -n "$boot_ver" ]; then
                 echo "${dep}:${boot_ver}=compileClasspath,runtimeClasspath" >> "$lockfile"
             elif echo "$dep" | grep -q 'kotlin' && [ -n "$kotlin_ver" ]; then
@@ -258,7 +263,9 @@ EOF_LOCK
         fi
     done
 
-    if [ -f "$lockfile" ] && [ "$(wc -l < "$lockfile")" -gt 2 ]; then
+    local line_count
+    line_count=$(wc -l < "$lockfile" 2>/dev/null | tr -d '[:space:]')
+    if [ -f "$lockfile" ] && [ "${line_count:-0}" -gt 2 ]; then
         echo "empty=" >> "$lockfile"
         _TEMP_LOCKFILE_CREATED=1
     else
@@ -285,6 +292,11 @@ _TEMP_WRAPPER_CREATED=0
 ensure_gradle_wrapper() {
     local pdir="$1"
     _TEMP_WRAPPER_CREATED=0
+
+    # Ensure gradlew has executable permissions (critical on macOS after checkout)
+    if [ -f "${pdir}/gradlew" ]; then
+        chmod +x "${pdir}/gradlew" 2>/dev/null || true
+    fi
 
     # Only act if gradlew exists and gradle-wrapper.properties exists
     if [ -f "${pdir}/gradlew" ] && [ -f "${pdir}/gradle/wrapper/gradle-wrapper.properties" ]; then
